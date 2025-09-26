@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Smart Invoice Splitter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/css/main.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">
+                <i class="bi bi-scissors me-2"></i>
+                Smart Invoice Splitter
+            </a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container py-4">
+        <!-- Header -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <h1 class="h2 mb-1">Dashboard</h1>
+                <p class="text-muted mb-0" id="totalBatches">Loading...</p>
+            </div>
+            <div class="col-md-4 text-end">
+                <!-- Removed archived notice for clean split-only interface -->
+            </div>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alertContainer"></div>
+
+        <!-- Upload Section -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-cloud-upload me-2"></i>
+                            Upload New PDF Batch
+                        </h5>
+                        <p class="card-text text-muted">
+                            Upload a multi-page PDF containing multiple invoices for AI-powered processing.
+                        </p>
+                        
+                        <form id="uploadForm" enctype="multipart/form-data">
+                            <div class="mb-3">
+                                <input type="file" class="form-control" id="pdfFile" name="pdf" accept=".pdf" required>
+                                <div class="form-text">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Max: 50MB, 200 pages, PDF only
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-upload me-2"></i>
+                                Upload & Process
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card bg-light">
+                    <div class="card-body text-center">
+                        <h2 class="display-4 text-primary mb-2" id="batchCount">0</h2>
+                        <p class="card-text text-muted mb-0">Total Batches</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Batches List -->
+        <div class="card">
+            <div class="card-header bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-list-ul me-2"></i>
+                        Document Batches
+                    </h5>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="loadBatches()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            
+            <div class="card-body p-0">
+                <div id="batchesContainer">
+                    <div class="text-center py-4">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="text-muted mt-2">Loading batches...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Batch Info Modal -->
+    <div class="modal fade" id="batchInfoModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Batch Information
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="batchInfoContent">
+                    <div class="text-center py-3">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Progress Modal -->
+    <div class="modal fade" id="uploadModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Uploading PDF</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center py-4">
+                    <div class="spinner-border text-primary mb-3" role="status">
+                        <span class="visually-hidden">Uploading...</span>
+                    </div>
+                    <h6 id="uploadStatusText">Uploading PDF...</h6>
+                    <p class="text-muted mb-0" id="uploadProgressText">Please wait while your file is being processed.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/main.js"></script>
+    
+    <script>
+    // Load initial data
+    document.addEventListener('DOMContentLoaded', function() {
+        loadBatches();
+    });
+
+    // Load batches data
+    async function loadBatches() {
+        try {
+            const response = await fetch('/api/batches');
+            const result = await response.json();
+            
+            if (result.success && result.data && result.data.batches) {
+                const batches = result.data.batches;
+                updateBatchCount(batches.length);
+                renderBatchesTable(batches);
+                
+                // Start auto-refresh polling for active batches
+                startAutoRefreshForActiveBatches(batches);
+            } else {
+                showAlert('error', 'Failed to load batches: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Load batches error:', error);
+            showAlert('error', 'Network error occurred while loading batches');
+        }
+    }
+
+    // Start auto-refresh polling for batches that are still processing
+    function startAutoRefreshForActiveBatches(batches) {
+        batches.forEach(batch => {
+            const isProcessing = ['PROCESSING_SPLIT', 'UPLOADED'].includes(batch.status);
+            
+            if (isProcessing) {
+                console.log(`Starting auto-refresh for batch ${batch.batchId} (status: ${batch.status})`);
+                
+                InvoiceProcessingSystem.polling.startBatchStatusPolling(
+                    batch.batchId, 
+                    (status, data) => {
+                        console.log(`Dashboard auto-refresh: Batch ${batch.batchId} -> ${status}`);
+                        
+                        // Refresh the entire batch list when status changes
+                        if (!['PROCESSING_SPLIT', 'UPLOADED'].includes(status)) {
+                            setTimeout(() => {
+                                loadBatches(); // Reload the dashboard
+                            }, 1000);
+                        }
+                    }
+                );
+            }
+        });
+    }
+
+    // Update batch count
+    function updateBatchCount(count) {
+        document.getElementById('batchCount').textContent = count;
+        document.getElementById('totalBatches').textContent = `${count} document batches processed`;
+    }
+
+    // Render batches table
+    function renderBatchesTable(batches) {
+        const container = document.getElementById('batchesContainer');
+        
+        if (batches.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-1 text-muted"></i>
+                    <h4 class="text-muted mt-3">No batches yet</h4>
+                    <p class="text-muted">Upload your first PDF batch to get started.</p>
+                </div>
+            `;
+            return;
+        }
+
+        const tableHtml = `
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Batch ID</th>
+                            <th>Filename</th>
+                            <th>Pages</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${batches.map(batch => `
+                            <tr>
+                                <td>
+                                    <code class="text-muted">${batch.batchId.substring(0, 8)}...</code>
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <i class="bi bi-file-pdf text-danger me-2"></i>
+                                        <span title="${batch.originalFilename}">
+                                            ${batch.originalFilename}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary">${batch.totalPages}</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-${getStatusClass(batch.status)} ${isProcessingStatus(batch.status) ? 'auto-refresh-badge' : ''}">
+                                        <i class="bi bi-${getStatusIcon(batch.status)} me-1 ${isProcessingStatus(batch.status) ? 'processing-icon' : ''}"></i>
+                                        ${batch.status.replace(/_/g, ' ')}
+                                        ${isProcessingStatus(batch.status) ? '<i class="bi bi-arrow-clockwise ms-1 auto-refresh-icon"></i>' : ''}
+                                    </span>
+                                </td>
+                                <td>
+                                    <small class="text-muted">
+                                        ${new Date(batch.createdAt).toLocaleDateString()}
+                                    </small>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        ${getActionButtons(batch)}
+                                        <button class="btn btn-outline-secondary" onclick="showBatchInfo('${batch.batchId}')" title="View Details">
+                                            <i class="bi bi-file-text"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger" onclick="deleteBatch('${batch.batchId}')" title="Delete">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+        
+        container.innerHTML = tableHtml;
+    }
+
+    // Get status CSS class
+    function getStatusClass(status) {
+        switch(status) {
+            case 'UPLOADED': return 'primary';
+            case 'PROCESSING_SPLIT': return 'warning';
+            case 'SPLIT_PROPOSED': return 'info';
+            case 'SPLIT_VALIDATED': return 'info';
+            case 'EXTRACTING_DATA': return 'warning';
+            case 'DATA_VALIDATION_PENDING': return 'warning';
+            case 'COMPLETED': return 'success';
+            case 'ERROR': return 'danger';
+            default: return 'secondary';
+        }
+    }
+
+    // Get status icon
+    function getStatusIcon(status) {
+        switch(status) {
+            case 'UPLOADED': return 'cloud-upload';
+            case 'PROCESSING_SPLIT': return 'gear';
+            case 'SPLIT_PROPOSED': return 'scissors';
+            case 'SPLIT_VALIDATED': return 'check-circle';
+            case 'EXTRACTING_DATA': return 'arrow-down-circle';
+            case 'DATA_VALIDATION_PENDING': return 'pencil-square';
+            case 'COMPLETED': return 'check-circle-fill';
+            case 'ERROR': return 'exclamation-triangle';
+            default: return 'circle';
+        }
+    }
+
+    // Check if status is processing (for visual indicators)
+    function isProcessingStatus(status) {
+        return ['PROCESSING_SPLIT'].includes(status);
+    }
+
+    // Get action buttons based on status
+    function getActionButtons(batch) {
+        switch(batch.status) {
+            case 'UPLOADED':
+                return `<button class="btn btn-outline-primary" onclick="startProcessing('${batch.batchId}')" title="Start Processing">
+                            <i class="bi bi-play"></i>
+                        </button>`;
+            case 'SPLIT_PROPOSED':
+                return `<a href="/validate-splits/${batch.batchId}" class="btn btn-outline-info" title="Validate Splits">
+                            <i class="bi bi-scissors"></i>
+                        </a>`;
+            case 'SPLIT_VALIDATED':
+                return `<button class="btn btn-outline-success" onclick="previewSplitPDFs('${batch.batchId}')" title="Preview Split PDFs">
+                            <i class="bi bi-eye"></i>
+                        </button>`;
+            case 'DATA_VALIDATION_PENDING':
+                return `<span class="badge bg-secondary">Archived Feature</span>`;
+            case 'COMPLETED':
+                return `<button class="btn btn-outline-success" onclick="previewSplitPDFs('${batch.batchId}')" title="View Split PDFs">
+                            <i class="bi bi-eye"></i>
+                        </button>`;
+            default:
+                return '';
+        }
+    }
+
+    // Upload form handling
+    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const fileInput = document.getElementById('pdfFile');
+        const file = fileInput.files[0];
+        
+        if (!file) {
+            showAlert('error', 'Please select a PDF file.');
+            return;
+        }
+        
+        if (file.type !== 'application/pdf') {
+            showAlert('error', 'Please select a valid PDF file.');
+            return;
+        }
+        
+        if (file.size > 50 * 1024 * 1024) {
+            showAlert('error', 'File size must be less than 50MB.');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('pdf', file);
+        
+        const uploadModal = new bootstrap.Modal(document.getElementById('uploadModal'));
+        uploadModal.show();
+        
+        // Timeout mechanism - close modal after 30 seconds regardless
+        const modalTimeout = setTimeout(() => {
+            console.warn('Upload modal timeout - closing automatically');
+            uploadModal.hide();
+        }, 30000);
+        
+        try {
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            // Clear timeout since we got a response
+            clearTimeout(modalTimeout);
+            
+            if (result.success) {
+                // Update modal to show processing status
+                document.getElementById('uploadStatusText').textContent = 'Processing PDF...';
+                document.getElementById('uploadProgressText').textContent = 'AI is splitting and analyzing your document. This may take a few moments.';
+                
+                showAlert('success', `File uploaded successfully! Batch ID: ${result.data.batchId.substring(0, 8)}...`);
+                
+                // Auto-start processing
+                setTimeout(async () => {
+                    try {
+                        await startProcessing(result.data.batchId, uploadModal);
+                    } catch (error) {
+                        console.error('Processing start error:', error);
+                        uploadModal.hide();
+                        showAlert('error', 'Failed to start processing');
+                    }
+                }, 1000);
+                
+                fileInput.value = '';
+                setTimeout(() => loadBatches(), 2000);
+            } else {
+                uploadModal.hide();
+                showAlert('error', result.error || 'Upload failed');
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            clearTimeout(modalTimeout);
+            uploadModal.hide();
+            showAlert('error', 'Network error occurred: ' + error.message);
+        }
+    });
+
+    // Start processing
+    async function startProcessing(batchId, modal = null) {
+        try {
+            const response = await fetch(`/api/batches/${batchId}/process`, {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                if (modal) {
+                    // Update modal to show processing status
+                    document.getElementById('uploadStatusText').textContent = 'Processing Started!';
+                    document.getElementById('uploadProgressText').textContent = 'AI is analyzing your document. You can monitor progress on the dashboard.';
+                    
+                    // Auto-close modal after 2 seconds
+                    setTimeout(() => {
+                        modal.hide();
+                    }, 2000);
+                } else {
+                    showAlert('info', 'Processing started! AI is analyzing your document...');
+                }
+                
+                // Start auto-refresh polling for this batch
+                InvoiceProcessingSystem.polling.startBatchStatusPolling(
+                    batchId,
+                    (status, data) => {
+                        console.log(`Dashboard: Batch ${batchId} status: ${status}`);
+                        
+                        // Refresh dashboard when status changes
+                        loadBatches();
+                        
+                        // Show status-specific notifications
+                        switch (status) {
+                            case 'SPLIT_PROPOSED':
+                                showAlert('success', `Document splitting completed for batch ${batchId.substring(0, 8)}! Ready for validation.`);
+                                break;
+                            case 'SPLIT_VALIDATED':
+                                showAlert('success', `PDF splitting completed for batch ${batchId.substring(0, 8)}! Individual PDFs are ready for preview.`);
+                                break;
+                            case 'ERROR':
+                                showAlert('error', `Processing failed for batch ${batchId.substring(0, 8)}: ${data.error || 'Unknown error'}`);
+                                break;
+                        }
+                    }
+                );
+                
+                setTimeout(() => loadBatches(), 3000);
+            } else {
+                if (modal) {
+                    modal.hide();
+                }
+                showAlert('error', result.error || 'Failed to start processing');
+            }
+        } catch (error) {
+            console.error('Processing error:', error);
+            if (modal) {
+                modal.hide();
+            }
+            showAlert('error', 'Network error occurred');
+        }
+    }
+
+    // Preview split PDFs
+    async function previewSplitPDFs(batchId) {
+        try {
+            const response = await fetch(`/api/batches/${batchId}`);
+            const result = await response.json();
+            
+            if (result.success && result.data.validatedSplits) {
+                const splits = result.data.validatedSplits;
+                
+                if (splits.length === 0) {
+                    showAlert('info', 'No split PDFs found for this batch.');
+                    return;
+                }
+                
+                // Create a modal to show the list of split PDFs
+                const modal = document.createElement('div');
+                modal.className = 'modal fade';
+                modal.id = 'splitPreviewModal';
+                modal.innerHTML = `
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">
+                                    <i class="bi bi-file-pdf me-2"></i>
+                                    Split PDFs Preview - Batch ${batchId.substring(0, 8)}...
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="text-muted mb-3">Found ${splits.length} split PDF${splits.length > 1 ? 's' : ''} in this batch:</p>
+                                <div class="list-group">
+                                    ${splits.map((split, index) => `
+                                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h6 class="mb-1">
+                                                    <i class="bi bi-file-pdf text-danger me-2"></i>
+                                                    ${split.filename || `Invoice_${index + 1}.pdf`}
+                                                </h6>
+                                                <small class="text-muted">
+                                                    Pages ${split.startPage}-${split.endPage} 
+                                                    ${split.invoiceNumber ? `• Invoice: ${split.invoiceNumber}` : ''}
+                                                </small>
+                                            </div>
+                                            <div>
+                                                <button class="btn btn-sm btn-outline-primary me-2" 
+                                                        onclick="openSplitPDF('${batchId}', '${split.filename || `Invoice_${index + 1}.pdf`}')" 
+                                                        title="Open PDF">
+                                                    <i class="bi bi-eye"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-success" 
+                                                        onclick="downloadSplitPDF('${batchId}', '${split.filename || `Invoice_${index + 1}.pdf`}')" 
+                                                        title="Download PDF">
+                                                    <i class="bi bi-download"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                <button class="btn btn-primary" onclick="downloadAllPDFs('${batchId}', ${JSON.stringify(splits)})">
+                                    <i class="bi bi-download me-1"></i>
+                                    Download All PDFs
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // Remove any existing modal
+                const existingModal = document.getElementById('splitPreviewModal');
+                if (existingModal) {
+                    existingModal.remove();
+                }
+                
+                document.body.appendChild(modal);
+                const bsModal = new bootstrap.Modal(modal);
+                bsModal.show();
+                
+                // Clean up modal when hidden
+                modal.addEventListener('hidden.bs.modal', () => {
+                    modal.remove();
+                });
+                
+            } else {
+                showAlert('error', 'Failed to load split information');
+            }
+        } catch (error) {
+            console.error('Preview error:', error);
+            showAlert('error', 'Network error occurred while loading split PDFs');
+        }
+    }
+
+    // Show batch info
+    async function showBatchInfo(batchId) {
+        const modal = new bootstrap.Modal(document.getElementById('batchInfoModal'));
+        const content = document.getElementById('batchInfoContent');
+        
+        modal.show();
+        
+        try {
+            const response = await fetch(`/api/batches/${batchId}`);
+            const result = await response.json();
+            
+            if (result.success) {
+                const batch = result.data;
+                content.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Basic Information</h6>
+                            <table class="table table-sm">
+                                <tr><td><strong>Batch ID:</strong></td><td><code>${batch.batchId}</code></td></tr>
+                                <tr><td><strong>Filename:</strong></td><td>${batch.originalFilename}</td></tr>
+                                <tr><td><strong>Total Pages:</strong></td><td>${batch.totalPages}</td></tr>
+                                <tr><td><strong>Status:</strong></td><td><span class="badge bg-secondary">${batch.status}</span></td></tr>
+                                <tr><td><strong>Created:</strong></td><td>${new Date(batch.createdAt).toLocaleString()}</td></tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Processing Details</h6>
+                            ${batch.proposedSplits ? 
+                                `<p><strong>Proposed Splits:</strong> ${batch.proposedSplits.length} invoices</p>` : 
+                                '<p class="text-muted">No splits detected yet</p>'
+                            }
+                            ${batch.errorMessage ? 
+                                `<div class="alert alert-danger alert-sm"><strong>Error:</strong> ${batch.errorMessage}</div>` : 
+                                ''
+                            }
+                        </div>
+                    </div>
+                `;
+            } else {
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Failed to load batch information
+                    </div>
+                `;
+            }
+        } catch (error) {
+            content.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Network error occurred
+                </div>
+            `;
+        }
+    }
+
+    // Delete batch
+    async function deleteBatch(batchId) {
+        if (!confirm('Are you sure you want to delete this batch?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/batches/${batchId}`, {
+                method: 'DELETE'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showAlert('success', 'Batch deleted successfully');
+                setTimeout(() => loadBatches(), 1000);
+            } else {
+                showAlert('error', result.error || 'Failed to delete batch');
+            }
+        } catch (error) {
+            console.error('Delete error:', error);
+            showAlert('error', 'Network error occurred');
+        }
+    }
+
+    // Show alert function
+    function showAlert(type, message) {
+        const alertContainer = document.getElementById('alertContainer');
+        const alertClass = type === 'success' ? 'alert-success' : 
+                          type === 'info' ? 'alert-info' : 
+                          type === 'warning' ? 'alert-warning' : 'alert-danger';
+        const iconClass = type === 'success' ? 'bi-check-circle' : 
+                         type === 'info' ? 'bi-info-circle' : 
+                         type === 'warning' ? 'bi-exclamation-triangle' : 'bi-exclamation-triangle';
+        
+        const alertHtml = `
+            <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                <i class="bi ${iconClass} me-2"></i>
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `;
+        
+        alertContainer.innerHTML = alertHtml;
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            const alert = alertContainer.querySelector('.alert');
+            if (alert) {
+                const bsAlert = new bootstrap.Alert(alert);
+                bsAlert.close();
+            }
+        }, 5000);
+    }
+
+    // Utility function to manually close upload modal if stuck
+    function forceCloseUploadModal() {
+        try {
+            const uploadModal = bootstrap.Modal.getInstance(document.getElementById('uploadModal'));
+            if (uploadModal) {
+                uploadModal.hide();
+            }
+            console.log('Upload modal closed manually');
+        } catch (error) {
+            console.error('Error closing upload modal:', error);
+        }
+    }
+
+    // Add to global scope for debugging
+    window.forceCloseUploadModal = forceCloseUploadModal;
+
+    // Open split PDF in new tab
+    function openSplitPDF(batchId, filename) {
+        const url = `/static/split/${batchId}/${filename}`;
+        window.open(url, '_blank');
+    }
+
+    // Download individual split PDF
+    function downloadSplitPDF(batchId, filename) {
+        const url = `/static/split/${batchId}/${filename}`;
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // Download all split PDFs
+    async function downloadAllPDFs(batchId, splits) {
+        if (!splits || splits.length === 0) {
+            showAlert('error', 'No PDFs to download');
+            return;
+        }
+
+        showAlert('info', `Starting download of ${splits.length} PDF files...`);
+
+        // Download each PDF file
+        for (let i = 0; i < splits.length; i++) {
+            const split = splits[i];
+            const filename = split.filename || `Invoice_${i + 1}.pdf`;
+            
+            try {
+                // Add a small delay between downloads to avoid overwhelming the browser
+                if (i > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                downloadSplitPDF(batchId, filename);
+            } catch (error) {
+                console.error(`Failed to download ${filename}:`, error);
+            }
+        }
+
+        showAlert('success', `Download initiated for ${splits.length} PDF files`);
+    }
+    </script>
+</body>
+</html>

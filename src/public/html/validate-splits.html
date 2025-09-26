@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validate Splits - Invoice Processing System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/css/main.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body class="bg-light">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">
+                <i class="bi bi-file-earmark-text me-2"></i>
+                Invoice Processing System
+            </a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid py-4">
+        <!-- Header -->
+        <div class="row mb-4">
+            <div class="col">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h1 class="h2 mb-1">Validate Document Splits</h1>
+                        <p class="text-muted mb-0" id="batchInfo">Loading batch information...</p>
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary" onclick="window.history.back()">
+                        <i class="bi bi-arrow-left me-1"></i>
+                        Back to Dashboard
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alertContainer"></div>
+
+        <!-- Split Validation Interface -->
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-scissors me-2"></i>
+                            Proposed Splits
+                        </h5>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="editSplitsBtn">
+                                <i class="bi bi-pencil"></i> Edit
+                            </button>
+                            <button type="button" class="btn btn-outline-success btn-sm" id="saveSplitsBtn" style="display: none;">
+                                <i class="bi bi-check-lg"></i> Save
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cancelEditBtn" style="display: none;">
+                                <i class="bi bi-x-lg"></i> Cancel
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="splitsContainer">
+                        <div class="text-center py-4">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="text-muted mt-2">Loading splits...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-file-pdf me-2"></i>
+                            PDF Preview
+                        </h5>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="zoomOut()">
+                                <i class="bi bi-zoom-out"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="zoomIn()">
+                                <i class="bi bi-zoom-in"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="resetZoom()">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="pdfViewerContainer" style="height: 600px; overflow: auto; border: 1px solid #dee2e6;">
+                            <div class="text-center py-5" id="pdfLoadingState">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading PDF...</span>
+                                </div>
+                                <p class="text-muted mt-2">Loading PDF preview...</p>
+                            </div>
+                            <canvas id="pdfCanvas" style="display: none; max-width: 100%;"></canvas>
+                        </div>
+                        <div class="p-3 border-top bg-light">
+                            <div class="row align-items-center">
+                                <div class="col">
+                                    <span class="text-muted">Page:</span>
+                                    <span id="currentPageInfo">1 of 1</span>
+                                </div>
+                                <div class="col-auto">
+                                    <div class="btn-group" role="group">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="previousPage()">
+                                            <i class="bi bi-chevron-left"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="nextPage()">
+                                            <i class="bi bi-chevron-right"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    let currentBatchId = null;
+    let currentBatchData = null;
+    
+    // PDF.js variables
+    let pdfDoc = null;
+    let currentPage = 1;
+    let scale = 1.2;
+    let canvas = null;
+    let ctx = null;
+
+    // Initialize PDF.js
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Load initial data
+    document.addEventListener('DOMContentLoaded', function() {
+        // Extract batchId from URL path: /validate-splits/:batchId
+        const pathParts = window.location.pathname.split('/');
+        currentBatchId = pathParts[pathParts.length - 1];
+        
+        // Fallback to query params if not found in path
+        if (!currentBatchId || currentBatchId === 'validate-splits') {
+            const urlParams = new URLSearchParams(window.location.search);
+            currentBatchId = urlParams.get('batchId');
+        }
+        
+        if (currentBatchId) {
+            loadBatchData();
+            // Start auto-refresh polling for this batch
+            startAutoRefreshPolling();
+        } else {
+            showAlert('error', 'No batch ID provided');
+        }
+    });
+
+    // Start auto-refresh polling for the current batch
+    function startAutoRefreshPolling() {
+        console.log(`Starting auto-refresh polling for batch ${currentBatchId}`);
+        
+        InvoiceProcessingSystem.polling.startBatchStatusPolling(
+            currentBatchId,
+            (status, data) => {
+                console.log(`Validate-splits page: Batch ${currentBatchId} status: ${status}`);
+                
+                // Handle status-specific actions
+                switch (status) {
+                    case 'PROCESSING_SPLIT':
+                        showAlert('info', 'Document is being processed... Please wait.', 'alertContainer', false);
+                        break;
+                        
+                    case 'SPLIT_PROPOSED':
+                        // Refresh the page data when splits are ready
+                        showAlert('success', 'Splits are ready for validation!');
+                        setTimeout(() => {
+                            loadBatchData(); // Refresh the split data
+                        }, 1000);
+                        break;
+                        
+                    case 'EXTRACTING_DATA':
+                        showAlert('info', 'Splits validated! Data extraction in progress...', 'alertContainer', false);
+                        break;
+                        
+                    case 'DATA_VALIDATION_PENDING':
+                        // Auto-redirect to data validation
+                        showAlert('success', 'Data extraction completed! Redirecting to data validation...', 'alertContainer', false);
+                        setTimeout(() => {
+                            window.location.href = `/batches/${currentBatchId}/validate-data`;
+                        }, 2000);
+                        break;
+                        
+                    case 'COMPLETED':
+                        showAlert('success', 'Processing completed! Redirecting to dashboard...', 'alertContainer', false);
+                        setTimeout(() => {
+                            window.location.href = '/dashboard';
+                        }, 2000);
+                        break;
+                        
+                    case 'ERROR':
+                        showAlert('error', `Processing failed: ${data.error || 'Unknown error'}`, 'alertContainer', false);
+                        break;
+                }
+            }
+        );
+    }
+
+    // Load batch data
+    async function loadBatchData() {
+        try {
+            const response = await fetch(`/api/batches/${currentBatchId}`);
+            const result = await response.json();
+            
+            if (result.success) {
+                const batch = result.data;
+                currentBatchData = batch; // Store batch data globally
+                updateBatchInfo(batch);
+                renderSplits(batch.proposedSplits || []);
+                loadPDFPreview(); // Load PDF preview
+            } else {
+                showAlert('error', 'Failed to load batch data: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Load batch error:', error);
+            showAlert('error', 'Network error occurred');
+        }
+    }
+
+    // Update batch info
+    function updateBatchInfo(batch) {
+        const info = document.getElementById('batchInfo');
+        info.textContent = `File: ${batch.originalFilename} • ${batch.totalPages} pages • ${(batch.proposedSplits || []).length} invoices detected`;
+    }
+
+    // Render splits
+    function renderSplits(splits) {
+        const container = document.getElementById('splitsContainer');
+        
+        if (splits.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-4">
+                    <i class="bi bi-exclamation-triangle display-4 text-warning"></i>
+                    <h6 class="mt-3">No splits detected</h6>
+                    <p class="text-muted">The AI couldn't detect invoice boundaries in this document.</p>
+                    <button type="button" class="btn btn-outline-warning" onclick="reprocessSplits()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>
+                        Reprocess
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        const splitsHtml = splits.map((split, index) => {
+            const startPage = split.startPage || 1;
+            const endPage = split.endPage || startPage;
+            const pageRange = startPage === endPage ? `${startPage}` : `${startPage}-${endPage}`;
+            
+            return `
+            <div class="border rounded p-3 mb-3 split-item" data-start-page="${startPage}" data-end-page="${endPage}">
+                <h6>Invoice ${index + 1}</h6>
+                <p class="mb-1">
+                    <strong>Pages:</strong> 
+                    <button type="button" class="btn btn-link btn-sm p-0" onclick="goToPage(${startPage})" title="Go to page ${startPage}">
+                        ${pageRange}
+                    </button>
+                </p>
+                ${split.invoiceNumber ? `<p class="mb-1"><strong>Invoice #:</strong> ${split.invoiceNumber}</p>` : ''}
+                ${split.confidence ? `<p class="mb-1"><strong>Confidence:</strong> ${Math.round(split.confidence * 100)}%</p>` : ''}
+                ${split.reasoning ? `<p class="mb-0 small text-muted"><strong>Reasoning:</strong> ${split.reasoning}</p>` : ''}
+            </div>
+        `}).join('');
+
+        container.innerHTML = `
+            ${splitsHtml}
+            <div class="d-grid gap-2">
+                <button type="button" class="btn btn-success" onclick="validateSplits()">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Confirm Splits
+                </button>
+                <button type="button" class="btn btn-outline-warning" onclick="reprocessSplits()">
+                    <i class="bi bi-arrow-clockwise me-2"></i>
+                    Reprocess
+                </button>
+            </div>
+        `;
+    }
+
+    // Validate splits
+    async function validateSplits() {
+        try {
+            // Get the current batch data to send the splits
+            const batchResponse = await fetch(`/api/batches/${currentBatchId}`);
+            const batchResult = await batchResponse.json();
+            
+            if (!batchResult.success) {
+                showAlert('error', 'Failed to load batch data for validation');
+                return;
+            }
+            
+            const validatedSplits = batchResult.data.proposedSplits || [];
+            
+            const response = await fetch(`/api/batches/${currentBatchId}/validate-splits`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    validatedSplits: validatedSplits
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showAlert('success', 'Splits validated successfully!');
+                setTimeout(() => {
+                    window.location.href = '/dashboard';
+                }, 2000);
+            } else {
+                showAlert('error', result.error || 'Failed to validate splits');
+            }
+        } catch (error) {
+            console.error('Validation error:', error);
+            showAlert('error', 'Network error occurred');
+        }
+    }
+
+    // Reprocess splits
+    async function reprocessSplits() {
+        if (!confirm('This will reprocess the document splits. Continue?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/batches/${currentBatchId}/process`, {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showAlert('info', 'Reprocessing started!');
+                setTimeout(() => loadBatchData(), 3000);
+            } else {
+                showAlert('error', result.error || 'Failed to start reprocessing');
+            }
+        } catch (error) {
+            console.error('Reprocessing error:', error);
+            showAlert('error', 'Network error occurred');
+        }
+    }
+
+    // Show alert function
+    function showAlert(type, message) {
+        const alertContainer = document.getElementById('alertContainer');
+        const alertClass = type === 'success' ? 'alert-success' : 
+                          type === 'info' ? 'alert-info' : 
+                          type === 'warning' ? 'alert-warning' : 'alert-danger';
+        const iconClass = type === 'success' ? 'bi-check-circle' : 
+                         type === 'info' ? 'bi-info-circle' : 
+                         type === 'warning' ? 'bi-exclamation-triangle' : 'bi-exclamation-triangle';
+        
+        alertContainer.innerHTML = `
+            <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                <i class="bi ${iconClass} me-2"></i>
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `;
+        
+        setTimeout(() => {
+            const alert = alertContainer.querySelector('.alert');
+            if (alert) {
+                new bootstrap.Alert(alert).close();
+            }
+        }, 5000);
+    }
+
+    // ============================================================================
+    // PDF PREVIEW FUNCTIONALITY
+    // ============================================================================
+
+    // Load PDF preview
+    async function loadPDFPreview() {
+        try {
+            const pdfUrl = `/api/files/${currentBatchId}/pdf`;
+            
+            // Load PDF document
+            const loadingTask = pdfjsLib.getDocument(pdfUrl);
+            pdfDoc = await loadingTask.promise;
+            
+            // Initialize canvas
+            canvas = document.getElementById('pdfCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // Hide loading state and show canvas
+            document.getElementById('pdfLoadingState').style.display = 'none';
+            canvas.style.display = 'block';
+            
+            // Render first page
+            currentPage = 1;
+            renderPage(currentPage);
+            updatePageInfo();
+            
+        } catch (error) {
+            console.error('Error loading PDF:', error);
+            document.getElementById('pdfLoadingState').innerHTML = `
+                <div class="text-center py-5">
+                    <i class="bi bi-exclamation-triangle display-4 text-warning"></i>
+                    <h6 class="mt-3">PDF Preview Unavailable</h6>
+                    <p class="text-muted">Failed to load PDF preview: ${error.message}</p>
+                </div>
+            `;
+        }
+    }
+
+    // Render specific page
+    async function renderPage(pageNum) {
+        if (!pdfDoc) return;
+        
+        try {
+            const page = await pdfDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: scale });
+            
+            // Set canvas dimensions
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            // Render page
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+            
+            await page.render(renderContext).promise;
+            
+        } catch (error) {
+            console.error('Error rendering page:', error);
+        }
+    }
+
+    // Update page info
+    function updatePageInfo() {
+        if (pdfDoc) {
+            document.getElementById('currentPageInfo').textContent = `${currentPage} of ${pdfDoc.numPages}`;
+        }
+    }
+
+    // Navigation functions
+    function previousPage() {
+        if (currentPage <= 1) return;
+        currentPage--;
+        renderPage(currentPage);
+        updatePageInfo();
+    }
+
+    function nextPage() {
+        if (!pdfDoc || currentPage >= pdfDoc.numPages) return;
+        currentPage++;
+        renderPage(currentPage);
+        updatePageInfo();
+    }
+
+    // Zoom functions
+    function zoomIn() {
+        scale += 0.25;
+        renderPage(currentPage);
+    }
+
+    function zoomOut() {
+        if (scale <= 0.5) return;
+        scale -= 0.25;
+        renderPage(currentPage);
+    }
+
+    function resetZoom() {
+        scale = 1.2;
+        renderPage(currentPage);
+    }
+
+    // Go to specific page (for split highlighting)
+    function goToPage(pageNum) {
+        if (!pdfDoc || pageNum < 1 || pageNum > pdfDoc.numPages) return;
+        currentPage = pageNum;
+        renderPage(currentPage);
+        updatePageInfo();
+    }
+
+    // Split editing variables and functions
+    let editMode = false;
+    let originalSplits = [];
+    let editableSplits = [];
+
+    // Initialize edit buttons
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('editSplitsBtn').addEventListener('click', enterEditMode);
+        document.getElementById('saveSplitsBtn').addEventListener('click', saveSplits);
+        document.getElementById('cancelEditBtn').addEventListener('click', exitEditMode);
+    });
+
+    function enterEditMode() {
+        console.log('Entering edit mode...', currentBatchData);
+        editMode = true;
+        originalSplits = [...(currentBatchData?.proposedSplits || [])];
+        editableSplits = [...originalSplits];
+        
+        // Ensure each split has all required fields with defaults
+        editableSplits = editableSplits.map((split, index) => ({
+            startPage: split.startPage || 1,
+            endPage: split.endPage || split.startPage || 1,
+            filename: split.filename || `invoice_${index + 1}.pdf`,
+            invoiceNumber: split.invoiceNumber || null,
+            confidence: split.confidence || null,
+            reasoning: split.reasoning || null
+        }));
+        
+        console.log('Editable splits initialized:', editableSplits);
+        
+        // Show/hide buttons
+        document.getElementById('editSplitsBtn').style.display = 'none';
+        document.getElementById('saveSplitsBtn').style.display = 'inline-block';
+        document.getElementById('cancelEditBtn').style.display = 'inline-block';
+        
+        // Clear any existing alerts
+        const alertContainer = document.getElementById('alertContainer');
+        if (alertContainer) {
+            alertContainer.innerHTML = '';
+        }
+        
+        // Show helpful message
+        showAlert('info', 'Edit Mode: You can adjust page ranges, delete incorrect splits, or add new ones. The AI detection is just a suggestion - you have full control to override it.');
+        
+        renderEditableSplits();
+    }
+
+    function exitEditMode() {
+        editMode = false;
+        editableSplits = [];
+        
+        // Show/hide buttons
+        document.getElementById('editSplitsBtn').style.display = 'inline-block';
+        document.getElementById('saveSplitsBtn').style.display = 'none';
+        document.getElementById('cancelEditBtn').style.display = 'none';
+        
+        renderSplits(originalSplits);
+    }
+
+    function renderEditableSplits() {
+        const container = document.getElementById('splitsContainer');
+        
+        const splitsHtml = editableSplits.map((split, index) => {
+            return `
+            <div class="border rounded p-3 mb-3 split-item-edit" data-index="${index}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h6>Invoice ${index + 1}</h6>
+                    <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeSplit(${index})">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label">Start Page</label>
+                        <input type="number" class="form-control form-control-sm" 
+                               value="${split.startPage || 1}" min="1" max="${currentBatchData?.totalPages || 1}"
+                               onchange="updateSplit(${index}, 'startPage', parseInt(this.value))">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">End Page</label>
+                        <input type="number" class="form-control form-control-sm" 
+                               value="${split.endPage || split.startPage || 1}" min="1" max="${currentBatchData?.totalPages || 1}"
+                               onchange="updateSplit(${index}, 'endPage', parseInt(this.value))">
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Filename</label>
+                    <input type="text" class="form-control form-control-sm" 
+                           value="${split.filename || `invoice_${index + 1}.pdf`}"
+                           onchange="updateSplit(${index}, 'filename', this.value)">
+                </div>
+                ${split.invoiceNumber ? `<p class="mb-1 small text-muted">Invoice #: ${split.invoiceNumber}</p>` : ''}
+            </div>
+            `;
+        }).join('');
+
+        container.innerHTML = `
+            ${splitsHtml}
+            <div class="d-grid gap-2">
+                <button type="button" class="btn btn-outline-primary" onclick="addSplit()">
+                    <i class="bi bi-plus-circle me-2"></i>
+                    Add Split
+                </button>
+            </div>
+        `;
+    }
+
+    function updateSplit(index, field, value) {
+        if (editableSplits[index]) {
+            editableSplits[index][field] = value;
+            console.log(`Updated split ${index}:`, editableSplits[index]);
+        }
+    }
+
+    function removeSplit(index) {
+        if (confirm('Are you sure you want to remove this split?')) {
+            editableSplits.splice(index, 1);
+            renderEditableSplits();
+        }
+    }
+
+    function addSplit() {
+        const lastPage = editableSplits.length > 0 ? 
+            Math.max(...editableSplits.map(s => s.endPage || s.startPage || 1)) + 1 : 1;
+        
+        const newSplit = {
+            startPage: Math.min(lastPage, currentBatchData?.totalPages || 1),
+            endPage: Math.min(lastPage, currentBatchData?.totalPages || 1),
+            filename: `invoice_${editableSplits.length + 1}.pdf`
+        };
+        
+        editableSplits.push(newSplit);
+        renderEditableSplits();
+    }
+
+    async function saveSplits() {
+        try {
+            console.log('Attempting to save splits:', editableSplits);
+            
+            // Check that we have at least one split
+            if (editableSplits.length === 0) {
+                showAlert('error', 'You must have at least one split to save');
+                return;
+            }
+
+            // Validate each split
+            for (let i = 0; i < editableSplits.length; i++) {
+                const split = editableSplits[i];
+                console.log(`Validating split ${i + 1}:`, split);
+                
+                if (!split.startPage || !split.endPage || !split.filename) {
+                    console.error(`Split ${i + 1} validation failed:`, {
+                        startPage: split.startPage,
+                        endPage: split.endPage,
+                        filename: split.filename
+                    });
+                    showAlert('error', `Split ${i + 1} is missing required fields (start page: ${split.startPage}, end page: ${split.endPage}, filename: ${split.filename})`);
+                    return;
+                }
+                if (split.startPage > split.endPage) {
+                    showAlert('error', `Split ${i + 1}: Start page (${split.startPage}) cannot be greater than end page (${split.endPage})`);
+                    return;
+                }
+                if (split.startPage < 1 || split.endPage < 1) {
+                    showAlert('error', `Split ${i + 1}: Page numbers must be greater than 0`);
+                    return;
+                }
+                if (split.endPage > (currentBatchData?.totalPages || 999)) {
+                    showAlert('error', `Split ${i + 1}: End page (${split.endPage}) cannot exceed total pages (${currentBatchData?.totalPages})`);
+                    return;
+                }
+            }
+
+            // Check for overlapping page ranges
+            for (let i = 0; i < editableSplits.length; i++) {
+                for (let j = i + 1; j < editableSplits.length; j++) {
+                    const split1 = editableSplits[i];
+                    const split2 = editableSplits[j];
+                    
+                    // Check if ranges overlap
+                    if ((split1.startPage <= split2.endPage && split1.endPage >= split2.startPage)) {
+                        showAlert('error', `Splits ${i + 1} and ${j + 1} have overlapping page ranges`);
+                        return;
+                    }
+                }
+            }
+
+            console.log('Saving splits:', editableSplits);
+
+            const response = await fetch(`/api/batches/${currentBatchId}/splits`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    splits: editableSplits,
+                    userOverride: true // Flag to indicate this is a manual user correction
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showAlert('success', `Splits updated successfully! Saved ${editableSplits.length} split(s).`);
+                
+                // Update the current batch data and exit edit mode
+                currentBatchData.proposedSplits = [...editableSplits];
+                originalSplits = [...editableSplits];
+                exitEditMode();
+            } else {
+                showAlert('error', 'Failed to update splits: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Save splits error:', error);
+            showAlert('error', 'Network error occurred while saving splits');
+        }
+    }
+
+    </script>
+</body>
+</html>
