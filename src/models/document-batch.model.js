@@ -11,6 +11,7 @@ class DocumentBatch {
     this.validatedSplits = data.validated_splits ? JSON.parse(data.validated_splits) : null;
     this.extractedData = data.extracted_data ? JSON.parse(data.extracted_data) : null;
     this.confidenceScores = data.confidence_scores ? JSON.parse(data.confidence_scores) : null;
+    this.layoutData = data.layout_data ? JSON.parse(data.layout_data) : null;
     this.errorMessage = data.error_message;
     this.createdAt = data.created_at;
     this.updatedAt = data.updated_at;
@@ -87,7 +88,7 @@ class DocumentBatch {
     const db = database.getDb();
     const allowedFields = [
       'status', 'total_pages', 'proposed_splits', 'validated_splits',
-      'extracted_data', 'confidence_scores', 'error_message'
+      'extracted_data', 'confidence_scores', 'layout_data', 'error_message'
     ];
 
     const updates = [];

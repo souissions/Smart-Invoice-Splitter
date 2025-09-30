@@ -210,6 +210,22 @@ router.get('/batches/:batchId/invoices/:invoiceIndex/validate', (req, res) => {
   sendHtmlNoCache(res, '../public/html/validate-data.html');
 });
 
+/**
+ * GET /extract-results
+ * UI: Invoice extraction results viewer
+ */
+router.get('/extract-results', (req, res) => {
+  sendHtmlNoCache(res, '../public/html/extract-results.html');
+});
+
+/**
+ * GET /invoices/:batchId
+ * UI: Invoice list interface for individual invoice extraction
+ */
+router.get('/invoices/:batchId', (req, res) => {
+  sendHtmlNoCache(res, '../public/html/invoice-list.html');
+});
+
 // ============================================================================
 // STATIC FILE SERVING
 // ============================================================================
@@ -227,13 +243,7 @@ router.use('/static/split', express.static('storage/split'));
 // ============================================================================
 // ERROR HANDLING FOR WEB ROUTES
 // ============================================================================
-
-/**
- * 404 handler for web routes
- */
-router.use('*', (req, res) => {
-  sendHtmlNoCache(res.status(404), '../public/html/error.html');
-});
+// Note: Error handling is done by the main app.js, no need for wildcard route here
 
 module.exports = router;
 

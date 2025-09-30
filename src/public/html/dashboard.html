@@ -152,6 +152,15 @@
     // Load initial data
     document.addEventListener('DOMContentLoaded', function() {
         loadBatches();
+        
+        // Add form submission handler to prevent default form submission
+        const uploadForm = document.getElementById('uploadForm');
+        if (uploadForm) {
+            uploadForm.addEventListener('submit', function(e) {
+                e.preventDefault(); // Prevent default form submission
+                uploadPDF(); // Call our custom upload function
+            });
+        }
     });
 
     // Load batches data
@@ -267,6 +276,7 @@
                                 <td>
                                     <div class="btn-group btn-group-sm">
                                         ${getActionButtons(batch)}
+                                        ${getExtractionButton(batch)}
                                         <button class="btn btn-outline-secondary" onclick="showBatchInfo('${batch.batchId}')" title="View Details">
                                             <i class="bi bi-file-text"></i>
                                         </button>
@@ -328,8 +338,8 @@
                             <i class="bi bi-play"></i>
                         </button>`;
             case 'SPLIT_PROPOSED':
-                return `<a href="/validate-splits/${batch.batchId}" class="btn btn-outline-info" title="Validate Splits">
-                            <i class="bi bi-scissors"></i>
+                return `<a href="/validate-splits/${batch.batchId}" class="btn btn-outline-warning" title="Validate Splits">
+                            <i class="bi bi-check-square"></i>
                         </a>`;
             case 'SPLIT_VALIDATED':
                 return `<button class="btn btn-outline-success" onclick="previewSplitPDFs('${batch.batchId}')" title="Preview Split PDFs">
@@ -342,14 +352,22 @@
                             <i class="bi bi-eye"></i>
                         </button>`;
             default:
-                return '';
+                return `<span class="badge bg-warning">Unknown Status</span>`;
         }
     }
 
-    // Upload form handling
-    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
+    function getExtractionButton(batch) {
+        // Show extraction button for batches that have validated splits or completed status
+        if (['SPLIT_VALIDATED', 'DATA_VALIDATION_PENDING', 'COMPLETED'].includes(batch.status)) {
+            return `<a href="/invoices/${batch.batchId}" class="btn btn-outline-info" title="Invoice Extraction">
+                        <i class="bi bi-file-earmark-text"></i>
+                    </a>`;
+        }
+        return '';
+    }
+
+    // Upload PDF file
+    async function uploadPDF() {
         const fileInput = document.getElementById('pdfFile');
         const file = fileInput.files[0];
         
@@ -421,7 +439,7 @@
             uploadModal.hide();
             showAlert('error', 'Network error occurred: ' + error.message);
         }
-    });
+    }
 
     // Start processing
     async function startProcessing(batchId, modal = null) {

@@ -41,10 +41,16 @@ class Database {
         validated_splits TEXT, -- JSON string
         extracted_data TEXT, -- JSON string
         confidence_scores TEXT, -- JSON string
+        layout_data TEXT, -- JSON string - stored DI layout for reuse
         error_message TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
+    `;
+
+    // Add layout_data column to existing tables if it doesn't exist
+    const addLayoutDataColumn = `
+      ALTER TABLE document_batches ADD COLUMN layout_data TEXT
     `;
 
     const createInvoicesTable = `
@@ -69,6 +75,14 @@ class Database {
             console.error('Error creating document_batches table:', err);
             reject(err);
             return;
+          }
+        });
+
+        // Try to add layout_data column for existing databases
+        this.db.run(addLayoutDataColumn, (err) => {
+          // Ignore error if column already exists
+          if (err && !err.message.includes('duplicate column name')) {
+            console.error('Error adding layout_data column:', err);
           }
         });
 

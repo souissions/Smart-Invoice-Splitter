@@ -320,9 +320,9 @@
             const result = await response.json();
             
             if (result.success) {
-                showAlert('success', 'Splits validated successfully!');
+                showAlert('success', 'Splits validated successfully! Redirecting to invoice list...');
                 setTimeout(() => {
-                    window.location.href = '/dashboard';
+                    window.location.href = `/invoices/${currentBatchId}`;
                 }, 2000);
             } else {
                 showAlert('error', result.error || 'Failed to validate splits');

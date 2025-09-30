@@ -216,10 +216,14 @@ class ProcessingController {
 
       console.log(`Boundaries detected: ${boundaryDetectionResult.invoiceCount} invoices`);
 
-      // Update document batch with proposed splits
+      // Store the layout data for later extraction reuse
+      const layoutData = textExtractionResult.layoutData || null;
+
+      // Update document batch with proposed splits and layout data
       await documentBatch.update({
         status: 'SPLIT_PROPOSED',
-        proposed_splits: boundaryDetectionResult.proposedSplits
+        proposed_splits: boundaryDetectionResult.proposedSplits,
+        layout_data: layoutData // Store for reuse in extraction
       });
 
       // If configured to deliver split-only, stop the pipeline here.
@@ -715,6 +719,298 @@ class ProcessingController {
       });
       throw error;
     }
+  }
+
+  /**
+   * Extract data from a single invoice using stored layout data
+   */
+  async extractSingleInvoice(req, res) {
+    try {
+      const { batchId, invoiceIndex } = req.params;
+      
+      // Get document batch
+      const documentBatch = await DocumentBatch.findById(batchId);
+      if (!documentBatch) {
+        return res.status(404).json({
+          success: false,
+          error: 'Batch not found'
+        });
+      }
+
+      if (!documentBatch.validatedSplits || documentBatch.validatedSplits.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'No validated splits found'
+        });
+      }
+
+      const invoiceIdx = parseInt(invoiceIndex);
+      if (invoiceIdx < 0 || invoiceIdx >= documentBatch.validatedSplits.length) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid invoice index'
+        });
+      }
+
+      const split = documentBatch.validatedSplits[invoiceIdx];
+      console.log(`Extracting data for invoice ${invoiceIdx + 1}: ${split.invoiceNumber}`);
+
+      // Try to reuse stored layout data first
+      let layoutData = documentBatch.layoutData;
+      
+      if (!layoutData) {
+        console.log('No stored layout data, extracting fresh layout...');
+        // Fallback: extract layout from the split PDF file
+        const today = new Date().toISOString().split('T')[0];
+        const cleanInvoiceNumber = (split.invoiceNumber || '')
+          .replace(/\s*\[LOW_CONFIDENCE\]\s*/g, '')
+          .trim();
+        const filename = `${cleanInvoiceNumber}_pages_${split.startPage}-${split.endPage}_${today}.pdf`;
+        const splitFilePath = `storage/split/${documentBatch.id}/${filename}`;
+        
+        const layoutResult = await azureDocumentService.getLayoutFromPDF(splitFilePath);
+        if (!layoutResult.success) {
+          return res.status(500).json({
+            success: false,
+            error: `Layout extraction failed: ${layoutResult.error}`
+          });
+        }
+        layoutData = layoutResult.layout;
+      } else {
+        console.log('Reusing stored layout data from initial processing');
+        // Filter layout data to only include pages for this specific invoice
+        layoutData = this.filterLayoutForPages(layoutData, split.startPage, split.endPage);
+      }
+
+      // Extract invoice data using the layout
+      const { extractFromLayout } = require('../services/extractor/extractFromLayout');
+      const { extract, diagnostics } = await extractFromLayout(layoutData);
+
+      // Map to your exact schema format
+      const mappedExtract = this.mapToExactSchema(extract);
+
+      // Store the extraction result in the database
+      await this.storeExtractionResult(documentBatch, invoiceIdx, {
+        extractedData: mappedExtract,
+        diagnostics: diagnostics,
+        metadata: {
+          extractionMethod: 'layout-reuse',
+          pagesProcessed: split.endPage - split.startPage + 1,
+          confidence: diagnostics.confidence || 0.85
+        },
+        status: 'completed'
+      });
+
+      res.json({
+        success: true,
+        data: {
+          batchId: documentBatch.id,
+          invoiceIndex: invoiceIdx,
+          invoiceNumber: split.invoiceNumber,
+          pageRange: `${split.startPage}-${split.endPage}`,
+          extractedData: mappedExtract,
+          diagnostics: diagnostics,
+          metadata: {
+            extractionMethod: 'layout-reuse',
+            pagesProcessed: split.endPage - split.startPage + 1,
+            confidence: diagnostics.confidence || 0.85
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Single invoice extraction error:', error);
+      
+      // Store the failed extraction in the database
+      try {
+        await this.storeExtractionResult(documentBatch, invoiceIdx, {
+          error: error.message,
+          status: 'failed',
+          failedAt: new Date().toISOString()
+        });
+      } catch (storeError) {
+        console.error('Error storing failed extraction result:', storeError);
+      }
+      
+      // Provide more specific error messages
+      let errorMessage = 'Failed to extract invoice data';
+      if (error.message.includes('token limit') || error.message.includes('Token limit')) {
+        errorMessage = 'Document too large for AI processing. Try splitting into smaller sections or reducing the number of pages.';
+      } else if (error.message.includes('rate limit') || error.message.includes('Rate limit')) {
+        errorMessage = 'API rate limit exceeded. Please wait a moment before retrying.';
+      } else if (error.message.includes('quota') || error.message.includes('Quota')) {
+        errorMessage = 'API usage quota exceeded. Please check your Azure OpenAI limits.';
+      } else if (error.message.includes('JSON parsing failed') || error.message.includes('JSON')) {
+        errorMessage = 'AI response parsing failed. This may be due to token limitations or malformed response. Please try again.';
+      } else if (error.message.includes('Layout extraction failed')) {
+        errorMessage = 'Could not process the PDF file. Please check if the file is valid.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Extraction timed out. Please try again with a smaller document.';
+      } else if (error.message.includes('Empty or invalid response')) {
+        errorMessage = 'AI model returned empty response. This usually indicates token limitations or processing issues.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      res.status(500).json({
+        success: false,
+        error: errorMessage,
+        details: {
+          originalError: error.message,
+          invoiceIndex: req.params.invoiceIndex,
+          batchId: req.params.batchId
+        }
+      });
+    }
+  }
+
+  /**
+   * Filter layout data to specific page range
+   */
+  filterLayoutForPages(layoutData, startPage, endPage) {
+    if (!layoutData || !layoutData.pages) return layoutData;
+
+    const filteredLayout = { ...layoutData };
+    
+    // Filter pages
+    filteredLayout.pages = layoutData.pages.filter(page => {
+      const pageNum = page.pageNumber || 1;
+      return pageNum >= startPage && pageNum <= endPage;
+    });
+
+    // Filter content to only include text from relevant pages
+    if (layoutData.content) {
+      const pageTexts = filteredLayout.pages.map(page => page.content || '').join('\n\n');
+      filteredLayout.content = pageTexts || layoutData.content;
+    }
+
+    // Filter tables to only include those from relevant pages
+    if (layoutData.tables) {
+      filteredLayout.tables = layoutData.tables.filter(table => {
+        const tablePageNum = table.pageNumber || 1;
+        return tablePageNum >= startPage && tablePageNum <= endPage;
+      });
+    }
+
+    return filteredLayout;
+  }
+
+  /**
+   * Store extraction result in the database
+   */
+  async storeExtractionResult(documentBatch, invoiceIndex, extractionResult) {
+    try {
+      // Get current extraction results or initialize empty object
+      let extractionResults = documentBatch.extractedData || {};
+      
+      // Store the result for this invoice index
+      extractionResults[invoiceIndex] = {
+        ...extractionResult,
+        extractedAt: new Date().toISOString()
+      };
+
+      // Update the batch with the new extraction results
+      await documentBatch.update({
+        extracted_data: extractionResults
+      });
+
+      console.log(`Stored extraction result for invoice ${invoiceIndex} in batch ${documentBatch.id}`);
+    } catch (error) {
+      console.error('Error storing extraction result:', error);
+      // Don't throw - this is not critical for the response
+    }
+  }
+
+  /**
+   * Map extraction result to exact schema format
+   */
+  mapToExactSchema(extract) {
+    const mapped = {
+      exporter: [],
+      importer: [],
+      basicInformation: [],
+      totalsAndSubtotals: [],
+      lineItems: []
+    };
+
+    // Map exporter data
+    if (extract.exporter && extract.exporter.length > 0) {
+      mapped.exporter = extract.exporter.map(exp => ({
+        name: exp.name || '',
+        eoriNumber: exp.eoriNumber || '',
+        vatNumber: exp.vatNumber || '',
+        rexNumber: exp.rexNumber || '',
+        address: exp.address || '',
+        city: exp.city || '',
+        zipCode: exp.zipCode || '',
+        country: exp.country || ''
+      }));
+    }
+
+    // Map importer data
+    if (extract.importer && extract.importer.length > 0) {
+      mapped.importer = extract.importer.map(imp => ({
+        name: imp.name || '',
+        eoriNumber: imp.eoriNumber || '',
+        vatNumber: imp.vatNumber || '',
+        address: imp.address || '',
+        city: imp.city || '',
+        zipCode: imp.zipCode || '',
+        country: imp.country || ''
+      }));
+    }
+
+    // Map basic information
+    if (extract.basicInformation && extract.basicInformation.length > 0) {
+      mapped.basicInformation = extract.basicInformation.map(basic => ({
+        internalReference: basic.internalReference || '',
+        documentType: basic.documentType || '',
+        documentNumber: basic.documentNumber || '',
+        documentDate: basic.documentDate || '',
+        dispatchCountry: basic.dispatchCountry || '',
+        finalDestination: basic.finalDestination || '',
+        originCountries: basic.originCountries || '',
+        incoterms: basic.incoterms || '',
+        incotermsCity: basic.incotermsCity || '',
+        commodityCode: basic.commodityCode || '',
+        totalPackages: basic.totalPackages || 0,
+        parcelType: basic.parcelType || ''
+      }));
+    }
+
+    // Map totals and subtotals
+    if (extract.totalsAndSubtotals && extract.totalsAndSubtotals.length > 0) {
+      mapped.totalsAndSubtotals = extract.totalsAndSubtotals.map(totals => ({
+        airFee: totals.airFee || 0,
+        otherFee1: totals.otherFee1 || 0,
+        insuranceFee: totals.insuranceFee || 0,
+        rebate: totals.rebate || 0,
+        amountDue: totals.amountDue || 0,
+        currency: totals.currency || '',
+        totalNetWeight: totals.totalNetWeight || 0,
+        totalGrossWeight: totals.totalGrossWeight || 0,
+        totalQuantity: totals.totalQuantity || 0,
+        totalVolume: totals.totalVolume || 0
+      }));
+    }
+
+    // Map line items
+    if (extract.lineItems && extract.lineItems.length > 0) {
+      mapped.lineItems = extract.lineItems.map(item => ({
+        productCode: item.productCode || '',
+        description: item.description || '',
+        hsCode: item.hsCode || '',
+        originCountry: item.originCountry || '',
+        farePreference: item.farePreference || '',
+        totalAmount: item.totalAmount || 0,
+        netWeight: item.netWeight || 0,
+        grossWeight: item.grossWeight || 0,
+        quantity: item.quantity || 0,
+        UOM: item.UOM || ''
+      }));
+    }
+
+    return mapped;
   }
 
   /**

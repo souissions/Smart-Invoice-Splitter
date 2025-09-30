@@ -134,6 +134,7 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs').promises;
+const { extractFromLayout } = require('../services/extractor/extractFromLayout');
 
 // Import controllers
 const uploadController = require('../controllers/upload.controller');
@@ -252,10 +253,72 @@ router.get('/batches/:batchId/extracted-data', (req, res, next) => {
 });
 
 /**
+ * POST /api/batches/:batchId/extract-invoice/:invoiceIndex
+ * Extract data from a single invoice using stored layout data
+ */
+router.post('/batches/:batchId/extract-invoice/:invoiceIndex', processingController.extractSingleInvoice.bind(processingController));
+
+/**
  * GET /api/health
  * Check Azure services health
  */
 router.get('/health', processingController.checkServiceHealth.bind(processingController));
+
+// ============================================================================
+// EXTRACTION ROUTES (Second Layer: Extraction & Mapping)
+// ============================================================================
+
+/**
+ * POST /api/extract
+ * Accepts Azure Document Intelligence Layout v4 JSON and returns a strict InvoiceExtract
+ */
+router.post('/extract', async (req, res) => {
+  try {
+    const layout = req.body;
+    if (!layout || typeof layout !== 'object') {
+      return res.status(400).json({ success: false, error: 'Invalid layout payload' });
+    }
+
+    const { extract, diagnostics } = await extractFromLayout(layout);
+    return res.json({ success: true, data: { extract, diagnostics }, message: 'Extraction completed' });
+  } catch (error) {
+    console.error('Extraction error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/extract-pdf
+ * Accepts PDF file, processes through Azure DI, then extracts invoice data
+ */
+router.post('/extract-pdf', uploadController.upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No PDF file provided' });
+    }
+
+    // Get Layout JSON from PDF
+    const layoutResult = await azureDocumentService.getLayoutFromPDF(req.file.path);
+    if (!layoutResult.success) {
+      return res.status(500).json({ success: false, error: `Layout extraction failed: ${layoutResult.error}` });
+    }
+
+    // Extract invoice data from Layout
+    const { extract, diagnostics } = await extractFromLayout(layoutResult.layout);
+    
+    // Clean up uploaded file
+    try { require('fs').unlinkSync(req.file.path); } catch {}
+
+    return res.json({ 
+      success: true, 
+      data: { extract, diagnostics }, 
+      message: 'PDF extraction completed' 
+    });
+  } catch (error) {
+    console.error('PDF extraction error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // ============================================================================
 // VALIDATION ROUTES

@@ -1,8 +1,8 @@
-# 🔄 Smart Invoice Splitter
+# 🔄 Smart Invoice Processing System
 
-This is a prototype of an AI-powered PDF splitting system that automatically identifies invoice boundaries within multi-page documents and generates separate invoice files.
+This is a prototype of an AI-powered PDF splitting system that automatically identifies invoice boundaries within multi-page documents, generates separate invoice files, and extracts structured data.
 
-## 🎬 Demo Video
+## 🎬 Demo Video (part_1 smart split)
 
 > **Demo**: [Watch the Smart Invoice Splitter in action](./demo/SMART%20INVOICE%20SPLITTER.mp4)
 
@@ -13,8 +13,10 @@ See how the system processes multi-page PDFs, detects invoice boundaries using A
 - **AI Boundary Detection**: Automatically identifies individual invoices within multi-page PDFs
 - **Smart Text Analysis**: Uses Azure Document Intelligence for layout and text extraction  
 - **LLM Processing**: Leverages Azure OpenAI to understand document structure and boundaries
-- **Interactive Dashboard**: Clean, responsive web interface with real-time updates
+- **Hybrid Interface**: Both web dashboard and direct API access for integration flexibility
 - **Batch Processing**: Handle multiple PDF files with progress tracking
+- **Direct Extraction API**: Process individual PDFs directly without batch workflow
+- **Configurable Modes**: Support for split-only mode or full extraction pipeline
 
 ## 🏗️ System Architecture & Flow
 
@@ -82,14 +84,22 @@ See how the system processes multi-page PDFs, detects invoice boundaries using A
 
 ### Processing Pipeline
 
+#### Batch Processing Workflow
 1. **PDF Upload** → File stored and batch created
 2. **Text Extraction** → Azure Document Intelligence extracts content and layout
-3. **Boundary Detection** → Azure OpenAI GPT-4 analyzes text to find invoice separators
-4. **Split Generation** → pdf-lib creates individual invoice files
-5. **User Validation** → Interactive interface for reviewing and approving splits
-6. **File Delivery** → Download individual PDFs or complete batch
+3. **Boundary Detection** → Azure OpenAI analyzes text to find invoice separators
+4. **Split Validation** → Review and approve AI-detected splits via web interface
+5. **PDF Splitting** → Create individual invoice files using pdf-lib
+6. **Data Extraction** → Extract structured invoice data (optional, configurable)
+7. **File Delivery** → Download individual PDFs
 
-> **Note**: The user validation step (step 5) can be automated to skip manual review and automatically apply AI-detected splits. However, keeping the validation step is recommended for better quality control.
+#### Direct Extraction Workflow
+1. **PDF Upload** → Direct API call with PDF file
+2. **Layout Analysis** → Azure Document Intelligence processes document
+3. **Data Extraction** → Extract structured invoice data using LLM
+4. **Normalized Output** → Return standardized invoice data with validation
+
+> **Configuration**: Set `SPLIT_ONLY=true` to disable data extraction features and focus only on PDF splitting functionality.
 
 ## 📚 Azure Services Documentation
 
@@ -166,7 +176,7 @@ AZURE_FORM_RECOGNIZER_KEY=your-form-recognizer-key
 # Azure OpenAI (REQUIRED)
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_KEY=your-openai-key
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o  # Can use gpt-4, gpt-4-turbo, gpt-4o, or other models
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o  # Can use other models
 
 # Application Settings
 NODE_ENV=development
@@ -176,6 +186,11 @@ PORT=3000
 MAX_FILE_SIZE=50000000
 MAX_PAGES_PER_BATCH=200
 CONFIDENCE_THRESHOLD=0.85
+
+# Feature Configuration
+SPLIT_ONLY=false                    # Set to 'true' to disable data extraction features
+ENABLE_LAYOUT_EXTRACT=true          # Enable/disable layout extraction
+STRICT_VALIDATION=false             # Enable strict schema validation
 ```
 
 ### 4. Start Application
@@ -193,23 +208,35 @@ npm run health-check
 
 ### 5. Access Application
 
-- **Dashboard**: http://localhost:3000
+- **Web Dashboard**: http://localhost:3000 (optional UI)
+- **API Base**: http://localhost:3000/api (primary interface)
 - **Health Check**: http://localhost:3000/ping
-- **API Base**: http://localhost:3000/api
+- **API Documentation**: See endpoints section below
 
 ## 🔍 API Endpoints
 
-### Core Operations
-- `POST /api/upload` - Upload PDF file
+### Core Batch Operations
+- `POST /api/upload` - Upload PDF file and create batch
 - `GET /api/batches` - List processing batches
-- `POST /api/batches/:id/process` - Start AI analysis
-- `POST /api/batches/:id/validate-splits` - Apply splits
+- `GET /api/batches/:id` - Get batch information
+- `POST /api/batches/:id/process` - Start AI boundary detection
+- `POST /api/batches/:id/validate-splits` - Apply splits and create individual PDFs
 - `GET /api/batches/:id/status` - Processing status
-- `GET /api/health` - Service health check
+- `DELETE /api/batches/:id` - Delete batch and files
+
+### Direct Extraction APIs
+- `POST /api/extract` - Extract data from Azure Document Intelligence layout JSON
+- `POST /api/extract-pdf` - Upload PDF and extract invoice data directly
+- `POST /api/batches/:id/extract-data` - Extract structured data from split invoices
 
 ### File Operations
-- `GET /static/split/:batchId/:filename` - Download split PDF
-- `GET /api/files/:batchId/pdf` - Original PDF access
+- `GET /api/files/:batchId/pdf` - Serve original PDF for preview
+- `GET /static/split/:batchId/:filename` - Download split PDF files
+- `GET /api/storage/stats` - Get storage statistics
+
+### System Health
+- `GET /api/health` - Check Azure services connectivity
+- `GET /ping` - Basic health check
 
 ## 📁 Project Structure
 
@@ -248,10 +275,11 @@ smart-invoice-splitter/
 - **helmet** - Security middleware
 - **cors** - Cross-origin resource sharing
 
-### Frontend
-- **Bootstrap 5** - UI framework
+### Frontend (Optional Web Interface)
+- **Bootstrap 5** - UI framework for web dashboard
 - **Vanilla JavaScript** - Client-side functionality
 - **Bootstrap Icons** - Icon library
+- **Responsive Design** - Works on desktop and tablet devices
 
 ## 🔧 Customization & Optimization
 
@@ -267,10 +295,34 @@ Key areas for customization in `azure-openai.service.js`:
 - `createBoundaryDetectionPrompt()` - Document analysis formatting
 - Temperature and token limits for optimal performance
 
+## 🚀 New Extraction Features
 
-### Support Resources
-- Check Azure service status: https://status.azure.com/
-- Azure support documentation: https://docs.microsoft.com/en-us/azure/
-- Application logs provide detailed error information
+### Direct PDF Extraction API
+The system now supports direct PDF-to-data extraction without the full batch workflow:
+
+```bash
+# Extract data directly from a PDF file
+curl -X POST http://localhost:3000/api/extract-pdf \
+  -F "pdf=@invoice.pdf" \
+  -H "Content-Type: multipart/form-data"
+```
+
+### Layout-Based Extraction
+Process Azure Document Intelligence layout JSON directly:
+
+```bash
+# Extract from pre-processed layout data
+curl -X POST http://localhost:3000/api/extract \
+  -H "Content-Type: application/json" \
+  -d @layout.json
+```
+
+### Enhanced Data Processing
+- **Normalized Output**: Automatic currency, date, and country code standardization
+- **Schema Validation**: Strict invoice data structure validation using Zod
+- **Error Recovery**: Enhanced error handling with retry mechanisms and token limit management
+- **Confidence Scoring**: Quality assessment for extracted data
+
+
 
 

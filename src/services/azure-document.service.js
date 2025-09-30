@@ -49,6 +49,38 @@ class AzureDocumentLayoutService {
     }
   }
 
+  // Get full Layout JSON with markdown content for extraction
+  async getLayoutFromPDF(filePath) {
+    try {
+      await this.initialize();
+      const pdfBuffer = fs.readFileSync(filePath);
+      if (!this.client) return { success: false, error: 'Azure Form Recognizer client not configured' };
+
+      const poller = await this.client.beginAnalyzeDocument('prebuilt-layout', pdfBuffer);
+      const result = await poller.pollUntilDone();
+      if (!result) return { success: false, error: 'No result from Azure' };
+
+      // Convert to markdown content
+      let content = '';
+      if (result.paragraphs) {
+        content = result.paragraphs.map(p => p.content).join('\n\n');
+      }
+
+      // Return full layout structure
+      const layout = {
+        content: content,
+        pages: result.pages || [],
+        tables: result.tables || [],
+        paragraphs: result.paragraphs || [],
+        spans: result.spans || []
+      };
+
+      return { success: true, layout };
+    } catch (err) {
+      return { success: false, error: err.message || String(err) };
+    }
+  }
+
   isConfigured() { return !!this.client; }
 
   // Disabled heavy APIs — archived

@@ -60,12 +60,6 @@ class InvoiceProcessingApp {
   }
 
   setupRoutes() {
-    // API routes
-    this.app.use('/api', apiRoutes);
-
-    // Web interface routes
-    this.app.use('/', webRoutes);
-
     // Health check endpoint
     this.app.get('/ping', (req, res) => {
       res.json({
@@ -75,6 +69,12 @@ class InvoiceProcessingApp {
         version: '1.0.0'
       });
     });
+
+    // API routes
+    this.app.use('/api', apiRoutes);
+    
+    // Web routes
+    this.app.use('/', webRoutes);
   }
 
   setupErrorHandling() {
